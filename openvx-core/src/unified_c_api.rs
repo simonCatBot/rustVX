@@ -93,6 +93,9 @@ pub struct VxCGraphData {
     /// Each wave is a list of node IDs that can execute in parallel.
     /// Computed during vxVerifyGraph, immutable thereafter.
     pub topo_waves: Mutex<Vec<Vec<u64>>>,
+    /// Per-node predecessor map: node_id -> list of node IDs that produce
+    /// data consumed by this node. Used for pipeup-aware scheduling.
+    pub node_predecessors: Mutex<HashMap<u64, Vec<u64>>>,
 }
 
 /// Context data
@@ -1632,6 +1635,62 @@ pub extern "C" fn vxVerifyGraph(graph: vx_graph) -> vx_status {
                 if let Ok(mut waves_lock) = g.topo_waves.lock() {
                     *waves_lock = topo_waves;
                 }
+
+                // Build per-node predecessor map for pipeup-aware scheduling.
+                // A node depends on another node if any of its parameters reference
+                // data produced by that other node.
+                let mut node_predecessors: std::collections::HashMap<u64, Vec<u64>> =
+                    std::collections::HashMap::new();
+                for (node_id, params) in &node_params {
+                    let mut preds = std::collections::HashSet::new();
+                    for param_opt in params.iter() {
+                        if let Some(param_ref) = param_opt {
+                            if let Some(&producer) = param_to_producer.get(param_ref) {
+                                if producer != *node_id {
+                                    preds.insert(producer);
+                                }
+                            }
+                            // ROI / pyramid parent producers
+                            unsafe {
+                                let ref_type = if let Ok(types) = REFERENCE_TYPES.lock() {
+                                    *types.get(&(*param_ref as usize)).unwrap_or(&0)
+                                } else {
+                                    0
+                                };
+                                if ref_type == VX_TYPE_IMAGE {
+                                    let img = &*(*param_ref as *const VxCImage);
+                                    if img.parent.is_some() && !img.roi_offsets.is_empty() {
+                                        let parent_ref = img.parent.unwrap() as u64;
+                                        if let Some(&producer) = param_to_producer.get(&parent_ref)
+                                        {
+                                            if producer != *node_id {
+                                                preds.insert(producer);
+                                            }
+                                        }
+                                    }
+                                    if let Ok(pyramid_levels) = PYRAMID_LEVEL_IMAGES.lock() {
+                                        if let Some(&(pyr_ref, _level)) =
+                                            pyramid_levels.get(&(*param_ref as usize))
+                                        {
+                                            let pyr_ref_u64 = pyr_ref as u64;
+                                            if let Some(&producer) =
+                                                param_to_producer.get(&pyr_ref_u64)
+                                            {
+                                                if producer != *node_id {
+                                                    preds.insert(producer);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    node_predecessors.insert(*node_id, preds.into_iter().collect());
+                }
+                if let Ok(mut pred_lock) = g.node_predecessors.lock() {
+                    *pred_lock = node_predecessors;
+                }
             }
 
             // Allocate backing storage for virtual images.
@@ -2313,9 +2372,89 @@ pub extern "C" fn vxProcessGraph(graph: vx_graph) -> vx_status {
     execute_graph_nodes(graph)
 }
 
+/// Check whether `node_id` should be skipped in the current graph execution
+/// because one of its predecessor nodes is still in its pipeup output phase
+/// and has not yet produced valid output.
+fn is_node_skipped_for_pipeup(
+    graph_id: u64,
+    node_id: u64,
+    exec_snapshot: &std::collections::HashMap<u64, u32>,
+) -> bool {
+    let predecessors = if let Ok(graphs) = GRAPHS_DATA.lock() {
+        if let Some(g) = graphs.get(&graph_id) {
+            if let Ok(preds) = g.node_predecessors.lock() {
+                preds.get(&node_id).cloned().unwrap_or_default()
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    };
+
+    if predecessors.is_empty() {
+        return false;
+    }
+
+    if let Ok(nodes) = crate::c_api::NODES.lock() {
+        for pred_id in predecessors {
+            let pred_data = match nodes.get(&pred_id) {
+                Some(d) => d,
+                None => continue,
+            };
+
+            let pipeup_output_depth = if let Ok(user_kernels) = USER_KERNELS.lock() {
+                user_kernels
+                    .get(&(pred_data.kernel_id as i32))
+                    .or_else(|| user_kernels.get(&((pred_data.kernel_id & 0xFFFFFFFF) as i32)))
+                    .map(|uk| uk.pipeup_output_depth.load(Ordering::SeqCst))
+            } else {
+                None
+            }
+            .unwrap_or(1);
+
+            let pred_executions = *exec_snapshot.get(&pred_id).unwrap_or(&0);
+            // A predecessor with depth D produces valid output after D-1 executions.
+            // If it has executed fewer times than that, its output is not valid yet.
+            if pipeup_output_depth > 1 && pred_executions + 1 < pipeup_output_depth {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn is_node_in_pipeup_state(node_id: u64, exec_snapshot: &std::collections::HashMap<u64, u32>) -> bool {
+    let kernel_id = if let Ok(nodes) = crate::c_api::NODES.lock() {
+        if let Some(node_data) = nodes.get(&node_id) {
+            node_data.kernel_id
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    };
+
+    let pipeup_output_depth = if let Ok(user_kernels) = USER_KERNELS.lock() {
+        user_kernels
+            .get(&(kernel_id as i32))
+            .or_else(|| user_kernels.get(&((kernel_id & 0xFFFFFFFF) as i32)))
+            .map(|uk| uk.pipeup_output_depth.load(Ordering::SeqCst))
+    } else {
+        None
+    }
+    .unwrap_or(1);
+
+    let execution_count = *exec_snapshot.get(&node_id).unwrap_or(&0);
+    pipeup_output_depth > 1 && execution_count + 1 < pipeup_output_depth
+}
+
 /// Execute the graph nodes (assumes graph is already verified and state is set to RUNNING)
 /// Returns the final status and updates graph state accordingly.
-fn execute_graph_nodes(graph: vx_graph) -> vx_status {
+pub(crate) fn execute_graph_nodes(graph: vx_graph) -> vx_status {
     // Clear any stale reference substitutions from previous executions
     clear_ref_substitutions();
 
@@ -2436,11 +2575,17 @@ fn execute_graph_nodes(graph: vx_graph) -> vx_status {
         return VX_SUCCESS;
     }
 
+    // For non-streaming graphs with pipeup nodes, vxProcessGraph must internally
+    // execute the graph until pipeup sources reach steady state so that the
+    // application-visible output is valid. Track whether the steady iteration
+    // has been performed.
+    let mut has_done_steady = false;
+
     // For QUEUE_MANUAL mode, we need to execute the graph for every set of
     // ready refs in the parameter queues. Loop until all queues are empty.
-    let mut loop_iter = 0;
+    let mut _loop_iter = 0;
     loop {
-        loop_iter += 1;
+        _loop_iter += 1;
         // Check if any queues still have ready refs (only for pipelining mode)
         let has_ready = {
             if let Ok(pipe_states) = crate::pipelining_api::GRAPH_PIPELINING.lock() {
@@ -2458,22 +2603,54 @@ fn execute_graph_nodes(graph: vx_graph) -> vx_status {
             }
         };
 
-        // If pipelining mode and no more ready refs, we're done
-        let is_pipelining = {
+        // Determine the active execution mode for this graph. Streaming-enabled
+        // graphs and non-Normal schedule modes bypass the pipeup warm-up.
+        let (is_pipelining, is_streaming) = {
             if let Ok(pipe_states) = crate::pipelining_api::GRAPH_PIPELINING.lock() {
                 if let Some(pipe_state) = pipe_states.get(&graph_id) {
                     let mode = pipe_state.schedule_mode.lock().unwrap();
-                    *mode != crate::pipelining::VxGraphScheduleMode::Normal
+                    let pipelining = *mode != crate::pipelining::VxGraphScheduleMode::Normal;
+                    let streaming = pipe_state.streaming_enabled.load(Ordering::SeqCst);
+                    (pipelining, streaming)
                 } else {
-                    false
+                    (false, false)
                 }
             } else {
-                false
+                (false, false)
             }
         };
 
         if is_pipelining && !has_ready {
             break;
+        }
+
+        // Snapshot node execution counts at the start of this graph iteration
+        // so that pipeup-aware skip decisions are based on the state before
+        // any node in this frame has run.
+        let exec_snapshot: std::collections::HashMap<u64, u32> = if let Ok(nodes_map) = crate::c_api::NODES.lock() {
+            nodes_map
+                .iter()
+                .map(|(&id, data)| (id, data.execution_count.load(Ordering::SeqCst)))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        // For non-streaming, non-pipelining graphs with pipeup nodes, perform
+        // an internal warm-up: execute iterations while any node is still in
+        // its pipeup output phase, then execute one steady iteration before
+        // returning to the caller. This ensures the application-visible output
+        // of vxProcessGraph is valid.
+        if !is_pipelining && !is_streaming {
+            let any_pipeup = nodes
+                .iter()
+                .any(|node_id| is_node_in_pipeup_state(*node_id, &exec_snapshot));
+            if !any_pipeup {
+                if has_done_steady {
+                    break;
+                }
+                has_done_steady = true;
+            }
         }
 
         // Execute each node in order
@@ -2520,6 +2697,13 @@ fn execute_graph_nodes(graph: vx_graph) -> vx_status {
         } else {
             String::new()
         };
+
+        // Pipeup-aware scheduling: if any predecessor is still in its pipeup
+        // output phase, its output is not valid yet, so skip this node for this
+        // graph execution.
+        if is_node_skipped_for_pipeup(graph_id, *node_id, &exec_snapshot) {
+            continue;
+        }
 
         match execute_node(*node_id) {
             Some(status) => {
@@ -2602,20 +2786,10 @@ fn execute_graph_nodes(graph: vx_graph) -> vx_status {
         crate::pipelining_api::notify_graph_completed(graph_id, g.context_id);
     }
 
-    // If not pipelining mode, only run once (the loop will break on next iteration)
-    let is_pipelining = {
-        if let Ok(pipe_states) = crate::pipelining_api::GRAPH_PIPELINING.lock() {
-            if let Some(pipe_state) = pipe_states.get(&graph_id) {
-                let mode = pipe_state.schedule_mode.lock().unwrap();
-                *mode != crate::pipelining::VxGraphScheduleMode::Normal
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    };
-    if !is_pipelining {
+    // Streaming mode calls execute_graph_nodes once per frame; normal graphs
+    // with pipeup nodes finish after the steady warm-up iteration. Pipelining
+    // modes keep looping to drain their parameter queues.
+    if is_streaming || (!is_pipelining && has_done_steady) {
         break;
     }
     } // end of loop
@@ -3042,6 +3216,56 @@ fn dispatch_kernel_with_border_ex(
     node_id: u64,
 ) -> vx_status {
     dispatch_kernel_with_border_impl(kernel_name, params, border, node_id)
+}
+
+/// Compute and store the VX_NODE_STATE for a node before the next execution.
+///
+/// The state is pipeup while `execution_count < pipeup_output_depth - 1` and
+/// steady afterwards. A depth of 0 or 1 means the node is always steady.
+fn update_node_state_for_execution(node_id: u64) {
+    let kernel_id = if let Ok(nodes) = crate::c_api::NODES.lock() {
+        if let Some(node_data) = nodes.get(&node_id) {
+            node_data.kernel_id
+        } else {
+            return;
+        }
+    } else {
+        return;
+    };
+
+    let pipeup_output_depth = if let Ok(user_kernels) = USER_KERNELS.lock() {
+        user_kernels
+            .get(&(kernel_id as i32))
+            .or_else(|| user_kernels.get(&((kernel_id & 0xFFFFFFFF) as i32)))
+            .map(|uk| uk.pipeup_output_depth.load(Ordering::SeqCst))
+    } else {
+        None
+    }
+    .unwrap_or(1);
+
+    let execution_count = if let Ok(nodes) = crate::c_api::NODES.lock() {
+        if let Some(node_data) = nodes.get(&node_id) {
+            node_data.execution_count.load(Ordering::SeqCst)
+        } else {
+            return;
+        }
+    } else {
+        return;
+    };
+
+    let state = if execution_count + 1 < pipeup_output_depth {
+        VX_NODE_STATE_PIPEUP
+    } else {
+        VX_NODE_STATE_STEADY
+    };
+
+    if let Ok(nodes) = crate::c_api::NODES.lock() {
+        if let Some(node_data) = nodes.get(&node_id) {
+            node_data
+                .node_state
+                .store(state as u32, Ordering::SeqCst);
+        }
+    }
 }
 
 fn dispatch_kernel_with_border(
@@ -4874,11 +5098,30 @@ fn dispatch_kernel_with_border_impl(
                 // only invokes the kernel function. (See test_usernode.c
                 // ImmediateProcessing assertions: after vxProcessGraph,
                 // is_initialize_called == is_deinitialize_called == false.)
-                if let Some(kernel_fn) = kernel_fn {
+
+                // Set VX_NODE_STATE before invoking the kernel so the kernel
+                // can query whether it is in pipeup or steady state. The state
+                // is based on the number of prior executions and the kernel's
+                // VX_KERNEL_PIPEUP_OUTPUT_DEPTH attribute.
+                update_node_state_for_execution(node_id);
+
+                let status = if let Some(kernel_fn) = kernel_fn {
                     unsafe { kernel_fn(node_ptr, params_ptr, num_params) }
                 } else {
                     VX_SUCCESS
+                };
+
+                // Advance the execution counter after a successful execution
+                // so the next invocation sees the updated state.
+                if status == VX_SUCCESS {
+                    if let Ok(nodes) = crate::c_api::NODES.lock() {
+                        if let Some(node_data) = nodes.get(&node_id) {
+                            node_data.execution_count.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
                 }
+
+                status
             } else {
                 // Unregistered kernel - return error
                 VX_ERROR_INVALID_KERNEL
@@ -6536,6 +6779,14 @@ pub struct VxCUserKernel {
     /// the user kernel manages its own local data via `vxSetNodeAttribute`
     /// during `init`. Set via `vxSetKernelAttribute(VX_KERNEL_LOCAL_DATA_SIZE)`.
     pub local_data_size: AtomicUsize,
+    /// Number of graph executions that must complete before the node produces
+    /// output data. Used to report VX_NODE_STATE_PIPEUP vs VX_NODE_STATE_STEADY.
+    /// Set via `vxSetKernelAttribute(VX_KERNEL_PIPEUP_OUTPUT_DEPTH)`.
+    pub pipeup_output_depth: AtomicU32,
+    /// Number of graph executions that must complete before the node consumes
+    /// input data. Reserved for future input-side pipeup tracking.
+    /// Set via `vxSetKernelAttribute(VX_KERNEL_PIPEUP_INPUT_DEPTH)`.
+    pub pipeup_input_depth: AtomicU32,
 }
 
 pub static USER_KERNELS: Lazy<Mutex<HashMap<vx_enum, Arc<VxCUserKernel>>>> =
@@ -6848,6 +7099,8 @@ pub extern "C" fn vxAddUserKernel(
             num_params,
             context_id: context as usize as u64,
             local_data_size: AtomicUsize::new(0),
+            pipeup_output_depth: AtomicU32::new(1),
+            pipeup_input_depth: AtomicU32::new(1),
         });
 
         if let Ok(mut kernels) = USER_KERNELS.lock() {
@@ -7526,6 +7779,12 @@ pub const VX_PARAMETER_REF: vx_enum = 0x80504; // VX_ATTRIBUTE_BASE + 0x04
 pub const VX_KERNEL_LOCAL_DATA_SIZE: vx_enum = 0x03;
 pub const VX_KERNEL_LOCAL_DATA_PTR: vx_enum = 0x04;
 pub const VX_KERNEL_ATTRIBUTE_BORDER: vx_enum = 0x05;
+// Full Khronos-encoded kernel attributes from vx_khr_pipelining.h
+pub const VX_KERNEL_PIPEUP_OUTPUT_DEPTH: vx_enum = 0x80404;
+pub const VX_KERNEL_PIPEUP_INPUT_DEPTH: vx_enum = 0x80405;
+// Node state attribute and values from vx_khr_pipelining.h
+pub const VX_NODE_STATE_STEADY: vx_enum = 0x23000;
+pub const VX_NODE_STATE_PIPEUP: vx_enum = 0x23001;
 
 // Kernel enum constants aligned with OpenVX 1.3 spec
 // Per OpenVX spec: VX_KERNEL_<name> = VX_KERNEL_BASE(VX_ID_KHRONOS, VX_LIBRARY_KHR_BASE) + offset
@@ -10175,6 +10434,28 @@ pub extern "C" fn vxSetKernelAttribute(
         if let Ok(kernels) = USER_KERNELS.lock() {
             if let Some(uk) = kernels.get(&kernel_enum_id) {
                 uk.local_data_size.store(value, Ordering::SeqCst);
+                return VX_SUCCESS;
+            }
+        }
+        // Built-in kernels accept this attribute but ignore it.
+        return VX_SUCCESS;
+    }
+
+    // VX_KERNEL_PIPEUP_OUTPUT_DEPTH / VX_KERNEL_PIPEUP_INPUT_DEPTH are used by
+    // the streaming extension to report VX_NODE_STATE_PIPEUP vs STEADY.
+    if attribute == VX_KERNEL_PIPEUP_OUTPUT_DEPTH || attribute == VX_KERNEL_PIPEUP_INPUT_DEPTH {
+        if ptr.is_null() || size < std::mem::size_of::<vx_uint32>() {
+            return VX_ERROR_INVALID_PARAMETERS;
+        }
+        let value: vx_uint32 = unsafe { *(ptr as *const vx_uint32) };
+        let kernel_enum_id = kernel as usize as vx_enum;
+        if let Ok(kernels) = USER_KERNELS.lock() {
+            if let Some(uk) = kernels.get(&kernel_enum_id) {
+                if attribute == VX_KERNEL_PIPEUP_OUTPUT_DEPTH {
+                    uk.pipeup_output_depth.store(value, Ordering::SeqCst);
+                } else {
+                    uk.pipeup_input_depth.store(value, Ordering::SeqCst);
+                }
                 return VX_SUCCESS;
             }
         }

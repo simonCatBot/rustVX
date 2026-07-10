@@ -167,7 +167,8 @@ jobs:
             -DOPENVX_CONFORMANCE_VISION=ON \
             -DOPENVX_USE_ENHANCED_VISION=ON \
             -DOPENVX_USE_USER_DATA_OBJECT=ON \
-            -DOPENVX_USE_PIPELINING=ON
+            -DOPENVX_USE_PIPELINING=ON \
+            -DOPENVX_USE_STREAMING=ON
           make -j$(nproc)
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -415,7 +416,7 @@ jobs:
           export VX_TEST_DATA_PATH=${{ github.workspace }}/OpenVX-cts/test_data/
           timeout 120 ./bin/vx_test_conformance --filter="UserDataObject.*"
 
-  # Pipelining, Streaming & Batch Processing KHR extension.
+  # Pipelining & Streaming KHR extensions.
   # Fast tests (loop_count=0/1/100/1000) cover all APIs.
   # Stress tests (loop_count=100) are reduced from the default 100000
   # in the build step via sed, so they complete on CI in ~5 min.
@@ -465,6 +466,53 @@ jobs:
           export VX_TEST_DATA_PATH=${{ github.workspace }}/OpenVX-cts/test_data/
           # After the sed patch, loop_count=100 tests are the stress tests.
           timeout 1200 ./bin/vx_test_conformance --filter="GraphPipeline.*loop_count=100*"
+
+  # Streaming KHR extension — fast and stress jobs.
+  # The CTS parameter grid assigns stream_time 100 ms to indices 0/3,
+  # 1000 ms to indices 1/4, and 10000 ms to indices 2/5. Fast job runs
+  # the short/medium tests; stress job runs the 10 s streaming tests.
+  streaming-fast:
+    name: "KHR extension: streaming fast"
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+      - name: Run Streaming fast tests
+        run: |
+          chmod +x OpenVX-cts/build/bin/vx_test_conformance
+          cd OpenVX-cts/build
+          export LD_LIBRARY_PATH=${{ github.workspace }}/target/release
+          export VX_TEST_DATA_PATH=${{ github.workspace }}/OpenVX-cts/test_data/
+          # Exclude indices 2 and 5, which use stream_time=10000 ms.
+          timeout 900 ./bin/vx_test_conformance --filter="GraphStreaming.*:-GraphStreaming.*/2/*:-GraphStreaming.*/5/*"
+
+  streaming-stress:
+    name: "KHR extension: streaming stress"
+    runs-on: ubuntu-22.04
+    needs: build
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+      - name: Run Streaming stress tests
+        run: |
+          chmod +x OpenVX-cts/build/bin/vx_test_conformance
+          cd OpenVX-cts/build
+          export LD_LIBRARY_PATH=${{ github.workspace }}/target/release
+          export VX_TEST_DATA_PATH=${{ github.workspace }}/OpenVX-cts/test_data/
+          # Indices 2 and 5 use stream_time=10000 ms.
+          timeout 600 ./bin/vx_test_conformance --filter="GraphStreaming.*/2/*:GraphStreaming.*/5/*"
 
   image-ops:
     runs-on: ubuntu-22.04
