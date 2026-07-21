@@ -97,6 +97,70 @@ The shared library is produced at:
 
 The standard OpenVX 1.3 C headers are bundled in [`include/VX/`](include/VX/) and can be passed to your C/C++ build directly.
 
+## Installing rustVX
+
+rustVX is currently distributed as a **build-from-source** project. After building once, you can use the shared library and headers directly from the build tree, or copy them to a system or project prefix.
+
+### Use from the build tree (simplest)
+
+```bash
+# Linux / macOS
+export LD_LIBRARY_PATH=/path/to/rustVX/target/release:$LD_LIBRARY_PATH   # Linux
+export DYLD_LIBRARY_PATH=/path/to/rustVX/target/release:$DYLD_LIBRARY_PATH # macOS
+
+# Compile your C/C++ application
+gcc app.c -I /path/to/rustVX/include -L /path/to/rustVX/target/release -lopenvx_ffi -o app
+./app
+```
+
+On Windows, add `target\release` to your `PATH` and link against `openvx_ffi.dll.lib`.
+
+### Install to a local prefix
+
+To keep rustVX isolated from system directories, copy the library and headers into a local prefix such as `/opt/rustVX` or `$HOME/.local/rustVX`:
+
+```bash
+PREFIX=/opt/rustVX
+mkdir -p "$PREFIX/lib" "$PREFIX/include"
+cp target/release/libopenvx_ffi.so* "$PREFIX/lib/"     # Linux
+# cp target/release/libopenvx_ffi.dylib* "$PREFIX/lib/"   # macOS
+# cp target/release/openvx_ffi.dll "$PREFIX/lib/"         # Windows
+cp -r include/VX "$PREFIX/include/"
+
+# Optional: create drop-in Khronos library names
+ln -sf libopenvx_ffi.so "$PREFIX/lib/libopenvx.so"
+ln -sf libopenvx_ffi.so "$PREFIX/lib/libvxu.so"
+```
+
+Then build against the prefix:
+
+```bash
+gcc app.c -I "$PREFIX/include" -L "$PREFIX/lib" -lopenvx_ffi -Wl,-rpath,"$PREFIX/lib" -o app
+```
+
+### System-wide install (Linux / macOS)
+
+If you prefer a system-wide installation, install to `/usr/local`:
+
+```bash
+sudo cp target/release/libopenvx_ffi.so* /usr/local/lib/
+sudo cp -r include/VX /usr/local/include/
+sudo ldconfig                       # Linux only
+```
+
+> [!NOTE]
+> rustVX is not yet published on crates.io for `cargo install`, and no OS packages (`.deb`, `.rpm`, Homebrew, etc.) are provided. The shared library produced by `cargo build --release -p openvx-ffi` is the canonical artifact.
+
+### Cargo dependency for Rust projects
+
+For Rust projects that want the native Rust kernel API, add the workspace crates as path dependencies:
+
+```toml
+[dependencies]
+openvx-core = { path = "/path/to/rustVX/openvx-core" }
+openvx-vision = { path = "/path/to/rustVX/openvx-vision", features = ["avx2"] }
+```
+
 ### Cargo features
 
 Both `openvx-core` (host of the C-API kernel callbacks the OpenVX graph executor invokes) and `openvx-vision` (host of the public Rust API kernels) expose a matching opt-in feature set:
