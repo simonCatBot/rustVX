@@ -20,7 +20,7 @@ An [OpenVX 1.3.1](https://www.khronos.org/openvx/) implementation written in Rus
 
 | Item | Status |
 |------|--------|
-| Current version | `0.1.0` (workspace version in [`Cargo.toml`](Cargo.toml)) |
+| Current version | `1.3.1` (workspace version in [`Cargo.toml`](Cargo.toml)) |
 | OpenVX target | **1.3.1** |
 | C API stability | Stable — follows the Khronos OpenVX 1.3.1 specification |
 | Native Rust API stability | **Evolving** — the `openvx-core` / `openvx-vision` crate APIs are not yet finalized |
