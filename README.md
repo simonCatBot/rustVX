@@ -16,6 +16,17 @@ An [OpenVX 1.3.1](https://www.khronos.org/openvx/) implementation written in Rus
 > [!NOTE]
 > rustVX targets the **OpenVX 1.3.1** specification. The KHR Streaming extension pipeup APIs were recently added (see PR #54); the streaming CTS test suite is not yet enabled in CI and is therefore excluded from the published conformance totals below.
 
+## Project status
+
+| Item | Status |
+|------|--------|
+| Current version | `0.1.0` (workspace version in [`Cargo.toml`](Cargo.toml)) |
+| OpenVX target | **1.3.1** |
+| C API stability | Stable — follows the Khronos OpenVX 1.3.1 specification |
+| Native Rust API stability | **Evolving** — the `openvx-core` / `openvx-vision` crate APIs are not yet finalized |
+| MSRV | Not declared; latest **stable** Rust toolchain recommended |
+| Distribution | Build from source (no crates.io / OS packages yet) |
+
 ## Conformance Status
 
 rustVX passes the full [Khronos OpenVX 1.3.1 Conformance Test Suite](https://github.com/KhronosGroup/OpenVX-cts) for all required profiles:
