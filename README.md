@@ -67,6 +67,8 @@ rustVX/
 
 The workspace compiles into a single shared library (`libopenvx_ffi.so` / `.dylib` / `.dll`) that any OpenVX application can link against.
 
+For a high-level overview of how the crates fit together, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 ## Prerequisites
 
 | Tool | Version |
