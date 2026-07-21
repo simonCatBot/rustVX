@@ -391,10 +391,20 @@ pub fn hough_lines_p(
     let width = src.width() as i32;
     let height = src.height() as i32;
 
+    // Validate input parameters to prevent division by zero or invalid dimensions
+    if rho <= 0.0 || theta <= 0.0 || threshold <= 0 {
+        return Ok(Vec::new());
+    }
+
     // Hough accumulator dimensions
     let max_rho = ((width * width + height * height) as f32).sqrt();
     let rho_bins = (2.0 * max_rho / rho) as usize + 1;
     let theta_bins = (std::f32::consts::PI / theta) as usize + 1;
+
+    // Ensure we have valid accumulator dimensions
+    if rho_bins == 0 || theta_bins == 0 {
+        return Ok(Vec::new());
+    }
 
     // Accumulator
     let mut accumulator = vec![vec![0i32; theta_bins]; rho_bins];
@@ -441,10 +451,11 @@ pub fn hough_lines_p(
                 }
 
                 // Sort points along the line
+                // Use unwrap_or to handle potential NaN values gracefully
                 segment_points.sort_by(|a, b| {
                     let proj_a = a.0 as f32 * angle.cos() + a.1 as f32 * angle.sin();
                     let proj_b = b.0 as f32 * angle.cos() + b.1 as f32 * angle.sin();
-                    proj_a.partial_cmp(&proj_b).unwrap()
+                    proj_a.partial_cmp(&proj_b).unwrap_or(std::cmp::Ordering::Equal)
                 });
 
                 // Extract line segments

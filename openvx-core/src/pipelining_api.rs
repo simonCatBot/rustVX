@@ -9,7 +9,7 @@
 //!   vxStopGraphStreaming
 
 use crate::pipelining::*;
-use crate::unified_c_api::GRAPHS_DATA;
+use crate::unified_c_api::{GRAPHS_DATA, VX_NODE_STATE_PIPEUP};
 use crate::pipelining_executor;
 use log::{error, info, warn};
 use std::ffi::c_void;
@@ -747,6 +747,33 @@ pub extern "C" fn vxStartGraphStreaming(graph: vx_graph) -> vx_status {
         }
     }
 
+    // Reset per-node streaming execution counters and state so that kernels
+    // with a pipeup depth observe the pipeup-to-steady transition during this
+    // streaming session.
+    {
+        let graphs = match GRAPHS_DATA.lock() {
+            Ok(g) => g,
+            Err(_) => return VX_FAILURE,
+        };
+        if let Some(g) = graphs.get(&graph_id) {
+            let nodes = match g.nodes.read() {
+                Ok(n) => n.clone(),
+                Err(_) => return VX_FAILURE,
+            };
+            drop(graphs);
+            if let Ok(nodes_map) = crate::c_api::NODES.lock() {
+                for node_id in nodes.iter() {
+                    if let Some(node_data) = nodes_map.get(node_id) {
+                        node_data.execution_count.store(0, Ordering::SeqCst);
+                        node_data
+                            .node_state
+                            .store(VX_NODE_STATE_PIPEUP as u32, Ordering::SeqCst);
+                    }
+                }
+            }
+        }
+    }
+
     // Reset stop signal
     pipe_state.streaming_stop.store(false, Ordering::SeqCst);
 
@@ -767,41 +794,49 @@ pub extern "C" fn vxStartGraphStreaming(graph: vx_graph) -> vx_status {
     VX_SUCCESS
 }
 
-/// Streaming loop - continuously re-schedules graph
+/// Streaming loop - continuously executes the graph until stopped.
 fn streaming_loop(graph: vx_graph, pipe_state: Arc<VxGraphPipeliningState>) {
     let graph_id = graph as u64;
 
+    info!("streaming_loop: graph {} started", graph_id);
+
     while !pipe_state.streaming_stop.load(Ordering::SeqCst) {
-        // In a real implementation, this would:
-        // 1. Wait for trigger node completion or new input
-        // 2. Re-schedule the graph
-        // 3. Handle errors
+        // Mark the graph as running for this iteration. execute_graph_nodes
+        // will set it back to COMPLETED on success or ABANDONED on error.
+        {
+            if let Ok(graphs) = GRAPHS_DATA.lock() {
+                if let Some(g) = graphs.get(&graph_id) {
+                    if let Ok(mut state) = g.state.lock() {
+                        *state = crate::unified_c_api::VxGraphState::VxGraphStateRunning;
+                    }
+                }
+            }
+        }
 
-        // For now, simulate periodic execution
-        std::thread::sleep(Duration::from_millis(10));
+        // Execute one graph iteration synchronously. This reuses the same
+        // node-execution path as vxProcessGraph, including queueing support
+        // and event emission.
+        let graph_ptr = graph as crate::unified_c_api::vx_graph;
+        let status = crate::unified_c_api::execute_graph_nodes(graph_ptr);
 
-        // Check if we should stop
-        if pipe_state.streaming_stop.load(Ordering::SeqCst) {
+        if status != VX_SUCCESS {
+            error!(
+                "streaming_loop: graph {} execution failed with status {}, stopping",
+                graph_id, status
+            );
             break;
         }
 
-        // Update pending count
-        {
-            let mut pending = pipe_state.pending_executions.lock().unwrap();
-            *pending += 1;
-        }
+        // Briefly yield so a stop request can be observed promptly without
+        // fully busy-waiting the CPU.
+        std::thread::sleep(Duration::from_micros(100));
+    }
 
-        // Execute graph (simplified - would call vxScheduleGraph or vxProcessGraph)
-        // In real implementation, this integrates with the graph executor
-
-        // Mark execution complete
-        {
-            let mut pending = pipe_state.pending_executions.lock().unwrap();
-            if *pending > 0 {
-                *pending -= 1;
-            }
-            pipe_state.pending_cv.notify_all();
-        }
+    // Drain any pending execution tracking that the stub implementation used.
+    {
+        let mut pending = pipe_state.pending_executions.lock().unwrap();
+        *pending = 0;
+        pipe_state.pending_cv.notify_all();
     }
 
     info!("streaming_loop: graph {} stopped", graph_id);

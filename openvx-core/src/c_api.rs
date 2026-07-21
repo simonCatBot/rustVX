@@ -6,7 +6,7 @@
 #![allow(unused_comparisons, unused_unsafe)]
 
 use std::ffi::{c_void, CStr};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 // Import the unified CONTEXTS registry
@@ -181,6 +181,10 @@ pub struct NodeData {
     pub border_mode: Mutex<crate::unified_c_api::vx_border_t>,
     /// Number of times this node has been executed (for VX_NODE_PERFORMANCE)
     pub run_count: std::sync::atomic::AtomicU64,
+    /// Number of executions this node has completed, used for VX_NODE_STATE pipeup/steady tracking.
+    pub execution_count: std::sync::atomic::AtomicU32,
+    /// Current node state reported by VX_NODE_STATE (VX_NODE_STATE_STEADY / VX_NODE_STATE_PIPEUP).
+    pub node_state: std::sync::atomic::AtomicU32,
     /// Whether the user-kernel `init` callback has been called for this node.
     /// Used by `vxVerifyGraph` to know when to call `deinit` before re-init.
     /// Always `false` for built-in kernels; only meaningful for user kernels.
@@ -722,6 +726,7 @@ pub extern "C" fn vxCreateGraph(context: vx_context) -> vx_graph {
         replicated_nodes: std::sync::Mutex::new(std::collections::HashMap::new()),
         owned_refs: std::sync::Mutex::new(Vec::new()),
         topo_waves: std::sync::Mutex::new(Vec::new()),
+        node_predecessors: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     if let Ok(mut graphs_data) = crate::unified_c_api::GRAPHS_DATA.lock() {
@@ -1102,6 +1107,16 @@ pub extern "C" fn vxQueryNode(
                         *(ptr as *mut *mut c_void) = p;
                         return VX_SUCCESS;
                     }
+                    VX_NODE_STATE => {
+                        if size < std::mem::size_of::<vx_enum>() {
+                            return VX_ERROR_INVALID_PARAMETERS;
+                        }
+                        let state = node_data
+                            .node_state
+                            .load(std::sync::atomic::Ordering::SeqCst);
+                        *(ptr as *mut vx_enum) = state as vx_enum;
+                        return VX_SUCCESS;
+                    }
                     _ => {}
                 }
             }
@@ -1471,6 +1486,8 @@ pub extern "C" fn vxCreateGenericNode(graph: vx_graph, kernel: vx_kernel) -> vx_
             constant_value: crate::c_api_data::vx_pixel_value_t { U32: 0 },
         }),
         run_count: std::sync::atomic::AtomicU64::new(0),
+        execution_count: std::sync::atomic::AtomicU32::new(0),
+        node_state: std::sync::atomic::AtomicU32::new(crate::unified_c_api::VX_NODE_STATE_STEADY as u32),
         user_kernel_initialized: std::sync::atomic::AtomicBool::new(false),
         local_data_size: std::sync::atomic::AtomicUsize::new(user_kernel_local_size),
         local_data_ptr: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
@@ -2579,6 +2596,7 @@ pub const VX_NODE_PERFORMANCE: vx_enum = 0x80301; // VX_ATTRIBUTE_BASE + 0x01
 pub const VX_NODE_BORDER: vx_enum = 0x80302; // VX_ATTRIBUTE_BASE + 0x02
 pub const VX_NODE_LOCAL_DATA_SIZE: vx_enum = 0x80303; // VX_ATTRIBUTE_BASE + 0x03
 pub const VX_NODE_LOCAL_DATA_PTR: vx_enum = 0x80304; // VX_ATTRIBUTE_BASE + 0x04
+pub const VX_NODE_STATE: vx_enum = 0x80309; // VX_ATTRIBUTE_BASE + 0x09 (KHR pipelining)
 pub const VX_NODE_PARAMETERS: vx_enum = 0x80305; // VX_ATTRIBUTE_BASE + 0x05
 pub const VX_NODE_IS_REPLICATED: vx_enum = 0x80306; // VX_ATTRIBUTE_BASE + 0x06
 pub const VX_NODE_REPLICATE_FLAGS: vx_enum = 0x80307; // VX_ATTRIBUTE_BASE + 0x07
