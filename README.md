@@ -9,8 +9,12 @@
 [![OpenVX Conformance](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml/badge.svg?branch=main)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
+[![OpenVX 1.3.1](https://img.shields.io/badge/OpenVX-1.3.1-blue.svg)](https://www.khronos.org/openvx/)
 
 An [OpenVX 1.3.1](https://www.khronos.org/openvx/) implementation written in Rust. rustVX provides the complete OpenVX Vision Feature Set through a standard C API (`libopenvx_ffi`), enabling existing OpenVX applications to use a memory-safe, portable backend with no source changes.
+
+> [!NOTE]
+> rustVX targets the **OpenVX 1.3.1** specification. The KHR Streaming extension pipeup APIs were recently added (see PR #54); the streaming CTS test suite is not yet enabled in CI and is therefore excluded from the published conformance totals below.
 
 ## Conformance Status
 
@@ -26,6 +30,14 @@ rustVX passes the full [Khronos OpenVX 1.3.1 Conformance Test Suite](https://git
 | **Total** | **6867** | **6867 / 6867** | ✅ **100%** |
 
 All implemented kernels are exercised in CI with `-DOPENVX_CONFORMANCE_VISION=ON -DOPENVX_USE_ENHANCED_VISION=ON -DOPENVX_USE_USER_DATA_OBJECT=ON -DOPENVX_USE_PIPELINING=ON`.
+
+The following OpenVX 1.3.1 extensions are **not implemented** in rustVX today:
+
+- Neural Network (NN) extension
+- Import/Export extension
+- Debug extension
+
+If you need one of these, please open an issue to discuss scope and priority.
 
 Latest CTS run results are published on each push and pull request via the [Actions tab](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml).
 
@@ -48,10 +60,21 @@ The workspace compiles into a single shared library (`libopenvx_ffi.so` / `.dyli
 
 | Tool | Version |
 |------|---------|
-| [Rust](https://rustup.rs/) | stable |
+| [Rust](https://rustup.rs/) | stable (MSRV not declared; latest stable recommended) |
 | C compiler | gcc, clang, or MSVC |
 | [CMake](https://cmake.org/) | 3.10+ |
 | Make or Ninja | for building the CTS |
+
+## Supported platforms
+
+| Platform | Tier | Notes |
+|----------|------|-------|
+| Linux x86_64 | Primary | CI-tested on Ubuntu 22.04 with AVX2 |
+| macOS x86_64 / Apple Silicon | Supported | Build instructions provided; Apple Silicon uses the NEON path |
+| Windows MSVC x64 | Supported | Build instructions provided |
+| Linux AArch64 | Best-effort | NEON path exists; not continuously tested in CI |
+
+`openvx-core` and `openvx-vision` compile on any platform Rust supports. SIMD kernels are selected at runtime from CPU feature flags, not vendor strings.
 
 ## Build
 
@@ -80,7 +103,7 @@ Both `openvx-core` (host of the C-API kernel callbacks the OpenVX graph executor
 
 | Feature | Effect |
 |---------|--------|
-| `simd` | Enables architecture-neutral SIMD code paths |
+| `simd` | Enables the portable SIMD abstraction layer; required by the architecture-specific features below |
 | `sse2` / `avx2` | x86_64 SIMD back-ends (imply `simd`) |
 | `neon` | AArch64 SIMD back-end (implies `simd`) |
 | `parallel` (`openvx-vision` only) | Enables Rayon-based multi-threaded kernels |
@@ -100,7 +123,7 @@ Performance work targets **AMD Zen (Ryzen / EPYC, Zen 2+)** — that's what CI m
 - **Intel Haswell and later** → same AVX2 path, parity with Zen.
 - **Older x86_64** (pre-AVX2) → SSE2 kernels + `-C target-cpu=x86-64-v2`.
 - **AArch64** (Apple Silicon, AWS Graviton, etc.) → NEON path.
-- **Anything else / no features** → scalar slice loop (still ~50× faster than the original per-pixel kernels).
+- **Anything else / no features** → scalar slice loop (still ~50× faster than the original per-pixel reference loops used during early development).
 
 Dispatch lives in `openvx-core::simd_kernels` (FFI graph path) and `openvx-vision::x86_64_simd` (Rust API). CI auto-detects host flags; for a manual Zen-targeted build:
 
@@ -140,6 +163,49 @@ For drop-in compatibility with build systems that look for `libopenvx` / `libvxu
 ln -s libopenvx_ffi.so target/release/libopenvx.so
 ln -s libopenvx_ffi.so target/release/libvxu.so
 ```
+
+## Using rustVX from Rust
+
+The workspace crates also expose a native Rust API. Add `openvx-vision` (and `openvx-core` if you need the context directly) to your `Cargo.toml`:
+
+```toml
+[dependencies]
+openvx-core = { path = "path/to/rustVX/openvx-core" }
+openvx-vision = { path = "path/to/rustVX/openvx-vision", features = ["avx2"] }
+```
+
+Then register kernels and execute them against a context:
+
+```rust
+use openvx_core::{Context, VxResult};
+use openvx_vision::register_all_kernels;
+
+fn main() -> VxResult<()> {
+    let context = Context::new()?;
+    register_all_kernels(&context)?;
+    // ... create data objects and call kernel.execute() or use the C FFI graph API ...
+    Ok(())
+}
+```
+
+For graph-mode vision workloads from Rust, the recommended path is to use the C FFI (`openvx-ffi`) through the standard `vx*` / `vxu*` API, which gives full OpenVX graph optimization, pipelining, and streaming support.
+
+## Verify your build
+
+Before running the full Khronos CTS, confirm the workspace builds and passes its own tests:
+
+```bash
+# Build the shared library
+cargo build --release -p openvx-ffi
+
+# Run Rust unit and integration tests
+cargo test --workspace --release
+
+# Run the Criterion micro-benchmarks
+cargo bench -p openvx-vision
+```
+
+If all three commands succeed, the library is ready for the conformance suite.
 
 ## Running Conformance Tests
 
