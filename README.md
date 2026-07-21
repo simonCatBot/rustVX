@@ -211,7 +211,7 @@ RUSTFLAGS="-C target-cpu=x86-64-v3" \
 
 ## Using rustVX from a C application
 
-`libopenvx_ffi` exports the full `vx*` / `vxu*` symbol set defined by the standard OpenVX headers, so existing OpenVX code links against it with no source changes. A minimal example:
+`libopenvx_ffi` exports the full `vx*` / `vxu*` symbol set defined by the standard OpenVX headers, so existing OpenVX code links against it with no source changes. A minimal graph-mode example:
 
 ```c
 #include <VX/vx.h>
@@ -223,6 +223,20 @@ int main(void) {
     vxReleaseGraph(&g);
     vxReleaseContext(&ctx);
     return 0;
+}
+```
+
+You can also use the **immediate-mode** `vxu*` helpers without building a graph. For example, to scale an image:
+
+```c
+#include <VX/vx.h>
+#include <VX/vxu.h>
+
+vx_status scale_image(vx_context ctx,
+                        vx_image src, vx_image dst,
+                        vx_scalar scale_x, vx_scalar scale_y)
+{
+    return vxuScaleImage(ctx, src, dst, VX_INTERPOLATION_BILINEAR);
 }
 ```
 
@@ -281,6 +295,49 @@ cargo bench -p openvx-vision
 ```
 
 If all three commands succeed, the library is ready for the conformance suite.
+
+## Troubleshooting
+
+### `OpenVX-cts` directory is empty after clone
+
+The Khronos CTS is included as a git submodule. Initialize it with:
+
+```bash
+git submodule update --init --recursive
+```
+
+### CMake 4.0 fails to configure the CTS
+
+The upstream CTS uses an older `cmake_minimum_required`. Add this flag when configuring:
+
+```bash
+cmake .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ...
+```
+
+It is harmless on older CMake versions.
+
+### `error while loading shared libraries: libopenvx_ffi.so`
+
+The dynamic linker cannot find the rustVX library. Set the library path before running:
+
+```bash
+# Linux
+export LD_LIBRARY_PATH=/path/to/rustVX/target/release:$LD_LIBRARY_PATH
+
+# macOS
+export DYLD_LIBRARY_PATH=/path/to/rustVX/target/release:$DYLD_LIBRARY_PATH
+
+# Windows (PowerShell)
+$env:PATH = "$PWD\..\..\target\release;$env:PATH"
+```
+
+### `Array.vxCreateArray` failures when running the CTS
+
+Build the CTS with `-fno-strict-aliasing`. The upstream CTS intentionally performs type punning between `vx_uint8*` and `vx_char*`; GCC `-O3` miscompiles those comparisons without the flag. This is a CTS build issue, not a rustVX runtime bug, and does not affect rustVX performance.
+
+### `cargo build` cannot find a `rustc` target or warns about edition 2021
+
+Make sure you are using a recent **stable** Rust toolchain. rustVX uses Rust edition 2021 and does not pin an explicit MSRV.
 
 ## Running Conformance Tests
 
