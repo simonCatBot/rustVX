@@ -171,6 +171,14 @@ For Rust projects that want the native Rust kernel API, add the workspace crates
 ```toml
 [dependencies]
 openvx-core = { path = "/path/to/rustVX/openvx-core" }
+openvx-vision = { path = "/path/to/rustVX/openvx-vision" }
+```
+
+To enable SIMD kernels on both crates, add matching features (for example, `avx2` on x86_64 or `neon` on AArch64):
+
+```toml
+[dependencies]
+openvx-core = { path = "/path/to/rustVX/openvx-core", features = ["avx2"] }
 openvx-vision = { path = "/path/to/rustVX/openvx-vision", features = ["avx2"] }
 ```
 
@@ -262,8 +270,18 @@ The workspace crates also expose a native Rust API. Add `openvx-vision` (and `op
 ```toml
 [dependencies]
 openvx-core = { path = "path/to/rustVX/openvx-core" }
+openvx-vision = { path = "path/to/rustVX/openvx-vision" }
+```
+
+To enable SIMD kernels on both the Rust API path and the FFI graph path, enable the matching feature on **both** crates:
+
+```toml
+[dependencies]
+openvx-core = { path = "path/to/rustVX/openvx-core", features = ["avx2"] }
 openvx-vision = { path = "path/to/rustVX/openvx-vision", features = ["avx2"] }
 ```
+
+Use `sse2` or `neon` instead of `avx2` depending on your target platform. If no SIMD feature is enabled, the scalar fallback is used.
 
 Then register kernels and execute them against a context:
 
