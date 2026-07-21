@@ -14,7 +14,7 @@
 An [OpenVX 1.3.1](https://www.khronos.org/openvx/) implementation written in Rust. rustVX provides the complete OpenVX Vision Feature Set through a standard C API (`libopenvx_ffi`), enabling existing OpenVX applications to use a memory-safe, portable backend with no source changes.
 
 > [!NOTE]
-> rustVX targets the **OpenVX 1.3.1** specification. The KHR Streaming extension pipeup APIs were recently added (see PR #54); the streaming CTS test suite is not yet enabled in CI and is therefore excluded from the published conformance totals below.
+> rustVX targets the **OpenVX 1.3.1** specification. The KHR Streaming extension pipeup APIs were recently added (see PR #54) and are now exercised in CI; the streaming CTS test suite passes and is included in the conformance totals below.
 
 ## Project status
 
@@ -38,9 +38,10 @@ rustVX passes the full [Khronos OpenVX 1.3.1 Conformance Test Suite](https://git
 | Enhanced Vision conformance profile | 1235 | **1235 / 1235** | ✅ |
 | User Data Object extension | 14 | **14 / 14** | ✅ |
 | Pipelining extension | 81 | **81 / 81** | ✅ |
-| **Total** | **6867** | **6867 / 6867** | ✅ **100%** |
+| Streaming extension | 24 | **24 / 24** | ✅ |
+| **Total** | **6891** | **6891 / 6891** | ✅ **100%** |
 
-All implemented kernels are exercised in CI with `-DOPENVX_CONFORMANCE_VISION=ON -DOPENVX_USE_ENHANCED_VISION=ON -DOPENVX_USE_USER_DATA_OBJECT=ON -DOPENVX_USE_PIPELINING=ON`.
+All implemented kernels and KHR extensions are exercised in CI with `-DOPENVX_CONFORMANCE_VISION=ON -DOPENVX_USE_ENHANCED_VISION=ON -DOPENVX_USE_USER_DATA_OBJECT=ON -DOPENVX_USE_PIPELINING=ON -DOPENVX_USE_STREAMING=ON`.
 
 The following OpenVX 1.3.1 extensions are **not implemented** in rustVX today:
 
@@ -384,7 +385,8 @@ cmake .. \
   -DOPENVX_CONFORMANCE_VISION=ON \
   -DOPENVX_USE_ENHANCED_VISION=ON \
   -DOPENVX_USE_USER_DATA_OBJECT=ON \
-  -DOPENVX_USE_PIPELINING=ON
+  -DOPENVX_USE_PIPELINING=ON \
+  -DOPENVX_USE_STREAMING=ON
 make -j$(nproc)
 
 # Run all tests
@@ -409,7 +411,8 @@ cmake .. \
   -DOPENVX_CONFORMANCE_VISION=ON \
   -DOPENVX_USE_ENHANCED_VISION=ON \
   -DOPENVX_USE_USER_DATA_OBJECT=ON \
-  -DOPENVX_USE_PIPELINING=ON
+  -DOPENVX_USE_PIPELINING=ON \
+  -DOPENVX_USE_STREAMING=ON
 make -j$(sysctl -n hw.ncpu)
 
 # Run all tests
@@ -434,7 +437,8 @@ cmake .. `
   -DOPENVX_CONFORMANCE_VISION=ON `
   -DOPENVX_USE_ENHANCED_VISION=ON `
   -DOPENVX_USE_USER_DATA_OBJECT=ON `
-  -DOPENVX_USE_PIPELINING=ON
+  -DOPENVX_USE_PIPELINING=ON `
+  -DOPENVX_USE_STREAMING=ON
 cmake --build . --config Release
 
 # Run all tests
@@ -501,6 +505,8 @@ GitHub Actions builds and runs the full CTS on every push and pull request. The 
 | **KHR: user-data-object** | UserDataObject (14 tests) | [![user-data-object](https://img.shields.io/github/check-runs/kiritigowda/rustVX/main?nameFilter=KHR%20extension%3A%20user-data-object&label=)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain) |
 | **KHR: pipelining fast** | GraphPipeline (fast) | [![KHR extension: pipelining fast](https://img.shields.io/github/check-runs/kiritigowda/rustVX/main?nameFilter=KHR%20extension%3A%20pipelining%20fast&label=)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain) |
 | **KHR: pipelining stress** | GraphPipeline (stress) | [![KHR extension: pipelining stress](https://img.shields.io/github/check-runs/kiritigowda/rustVX/main?nameFilter=KHR%20extension%3A%20pipelining%20stress&label=)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain) |
+| **KHR: streaming fast** | GraphStreaming (short/medium stream_time) | [![KHR extension: streaming fast](https://img.shields.io/github/check-runs/kiritigowda/rustVX/main?nameFilter=KHR%20extension%3A%20streaming%20fast&label=)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain) |
+| **KHR: streaming stress** | GraphStreaming (10 s stream_time stress) | [![KHR extension: streaming stress](https://img.shields.io/github/check-runs/kiritigowda/rustVX/main?nameFilter=KHR%20extension%3A%20streaming%20stress&label=)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain) |
 | **Enhanced-Vision: Feature Extraction** | HOGCells, HOGFeatures, MatchTemplate, LBP (44 tests) | [![Enhanced-Vision: Feature Extraction](https://img.shields.io/github/check-runs/kiritigowda/rustVX/main?nameFilter=Enhanced-Vision%3A%20Feature%20Extraction&label=)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain) |
 | **Enhanced-Vision: Post-Processing** | Copy, NonMaxSuppression, HoughLinesP (84 tests) | [![Enhanced-Vision: Post-Processing](https://img.shields.io/github/check-runs/kiritigowda/rustVX/main?nameFilter=Enhanced-Vision%3A%20Post-Processing&label=)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain) |
 | **Enhanced-Vision: Tensor Arithmetic** | TensorOp, Min, Max (222 tests) | [![Enhanced-Vision: Tensor Arithmetic](https://img.shields.io/github/check-runs/kiritigowda/rustVX/main?nameFilter=Enhanced-Vision%3A%20Tensor%20Arithmetic&label=)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain) |
