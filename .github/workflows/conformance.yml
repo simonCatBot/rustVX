@@ -131,24 +131,7 @@ jobs:
           fi
       - name: Build OpenVX CTS
         run: |
-          # Reduce loop_count for stress tests from 1000/100000/1000000 to 100 so they
-          # complete on CI runners in reasonable time. Must patch longer strings FIRST
-          # (1000000 before 100000 before 1000) to avoid partial-match issues.
-          sed -i \
-            -e 's|loop_count=1000000|loop_count=100|g' \
-            -e 's|loop_count=100000|loop_count=100|g' \
-            -e 's|loop_count=1000|loop_count=100|g' \
-            -e 's|__VA_ARGS__, 1000000)|__VA_ARGS__, 100)|g' \
-            -e 's|__VA_ARGS__, 100000)|__VA_ARGS__, 100)|g' \
-            -e 's|__VA_ARGS__, 1000)|__VA_ARGS__, 100)|g' \
-            OpenVX-cts/test_conformance/test_graph_pipeline.c
-          # Verify the patch was applied
-          echo "=== Verifying loop_count patch ==="
-          grep -c "loop_count=1000000" OpenVX-cts/test_conformance/test_graph_pipeline.c || true
-          grep -c "loop_count=100000" OpenVX-cts/test_conformance/test_graph_pipeline.c || true
-          grep -c "loop_count=1000" OpenVX-cts/test_conformance/test_graph_pipeline.c || true
-          grep -c "loop_count=100" OpenVX-cts/test_conformance/test_graph_pipeline.c || true
-          echo "=== Patch verification done ==="
+          # Use the upstream OpenVX 1.3.2 CTS unmodified. Do not patch test source files.
           cd OpenVX-cts
           mkdir -p include
           if [ -d "../include" ]; then
