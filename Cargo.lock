@@ -341,14 +341,14 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "openvx-buffer"
-version = "0.1.0"
+version = "1.3.1"
 dependencies = [
  "openvx-core",
 ]
 
 [[package]]
 name = "openvx-core"
-version = "0.1.0"
+version = "1.3.1"
 dependencies = [
  "log",
  "once_cell",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "openvx-ffi"
-version = "0.1.0"
+version = "1.3.1"
 dependencies = [
  "openvx-buffer",
  "openvx-core",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "openvx-image"
-version = "0.1.0"
+version = "1.3.1"
 dependencies = [
  "log",
  "openvx-core",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "openvx-vision"
-version = "0.1.0"
+version = "1.3.1"
 dependencies = [
  "assert_approx_eq",
  "criterion",

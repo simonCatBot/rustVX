@@ -169,6 +169,10 @@ pub struct VxCImage {
     pub parent_plane_index: Option<usize>,
     /// Valid region rectangle for the image
     pub valid_rect: RwLock<vx_rectangle_t>,
+    /// True if created via vxCreateUniformImage
+    pub is_uniform: bool,
+    /// The uniform pixel value (only meaningful when is_uniform is true)
+    pub uniform_value: crate::c_api_data::vx_pixel_value_t,
 }
 
 impl VxCImage {
@@ -9503,14 +9507,142 @@ pub extern "C" fn vxCreateTensor(
 #[no_mangle]
 pub extern "C" fn vxCreateTensorFromView(
     tensor: vx_tensor,
-    _num_dims: usize,
+    num_dims: usize,
     roi_start: *const usize,
     roi_end: *const usize,
 ) -> vx_tensor {
-    if tensor.is_null() || roi_start.is_null() || roi_end.is_null() {
+    if tensor.is_null() || roi_start.is_null() || roi_end.is_null() || num_dims == 0 {
         return std::ptr::null_mut();
     }
-    std::ptr::null_mut()
+    let parent_addr = tensor as usize;
+    unsafe {
+        // Get parent tensor info
+        let (parent_dims, data_type, fixed_point_pos) = {
+            let tensors = TENSORS.lock();
+            if let Ok(t_map) = tensors {
+                if let Some(t) = t_map.get(&parent_addr) {
+                    (t.dims.clone(), t.data_type, t.fixed_point_position)
+                } else {
+                    return std::ptr::null_mut();
+                }
+            } else {
+                return std::ptr::null_mut();
+            }
+        };
+        if parent_dims.len() < num_dims {
+            return std::ptr::null_mut();
+        }
+        let start = std::slice::from_raw_parts(roi_start, num_dims);
+        let end = std::slice::from_raw_parts(roi_end, num_dims);
+        // Validate ROI bounds
+        let view_dims: Vec<usize> = (0..num_dims).map(|i| {
+            if end[i] < start[i] || end[i] > parent_dims[i] {
+                return 0;
+            }
+            end[i] - start[i]
+        }).collect();
+        for &d in &view_dims {
+            if d == 0 {
+                return std::ptr::null_mut();
+            }
+        }
+        // Element size
+        let element_size: usize = match data_type {
+            VX_TYPE_UINT8 | VX_TYPE_INT8 => 1,
+            VX_TYPE_INT16 | VX_TYPE_UINT16 => 2,
+            VX_TYPE_INT32 | VX_TYPE_UINT32 | VX_TYPE_FLOAT32 => 4,
+            VX_TYPE_INT64 | VX_TYPE_UINT64 | VX_TYPE_FLOAT64 => 8,
+            _ => 1,
+        };
+        // Create the view tensor with the view dimensions
+        let view_tensor = Box::into_raw(Box::new(VxCTensor::new(
+            num_dims,
+            view_dims.clone(),
+            data_type,
+            fixed_point_pos,
+        )));
+        let view_addr = view_tensor as usize;
+        if let Ok(mut tensors) = TENSORS.lock() {
+            tensors.insert(view_addr, Arc::new(VxCTensor::new(
+                num_dims,
+                view_dims.clone(),
+                data_type,
+                fixed_point_pos,
+            )));
+        }
+        if let Ok(mut counts) = REFERENCE_COUNTS.lock() {
+            counts.insert(view_addr, AtomicUsize::new(1));
+        }
+        if let Ok(mut types) = REFERENCE_TYPES.lock() {
+            types.insert(view_addr, VX_TYPE_TENSOR);
+        }
+        // Compute view data: copy the sub-region from parent data
+        let view_data: Vec<u8> = {
+            let parent_data_guard = TENSOR_DATA.lock();
+            if let Ok(parent_data_map) = parent_data_guard {
+                if let Some(parent_data) = parent_data_map.get(&parent_addr) {
+                    // Compute parent strides (contiguous, dim[0] is innermost)
+                    let mut parent_strides = vec![element_size; num_dims];
+                    for i in 1..num_dims {
+                        parent_strides[i] = parent_strides[i-1] * parent_dims[i-1];
+                    }
+                    // Total view elements
+                    let mut view_elements = 1usize;
+                    for &d in &view_dims {
+                        view_elements = view_elements.saturating_mul(d);
+                    }
+                    let view_bytes = view_elements * element_size;
+                    let mut buf = vec![0u8; view_bytes];
+                    // Iterate over view elements and copy from parent
+                    // For each element in the view, compute the parent offset
+                    let mut idx = vec![0usize; num_dims];
+                    let mut written = 0usize;
+                    loop {
+                        // Compute parent offset (strides already include element_size)
+                        let mut parent_offset = 0usize;
+                        for d in 0..num_dims {
+                            parent_offset += (start[d] + idx[d]) * parent_strides[d];
+                        }
+                        // Copy one element
+                        let src = &parent_data[parent_offset..parent_offset + element_size];
+                        let dst_off = written * element_size;
+                        buf[dst_off..dst_off + element_size].copy_from_slice(src);
+                        written += 1;
+                        if written >= view_elements {
+                            break;
+                        }
+                        // Increment multi-dimensional index (dim 0 is innermost)
+                        let mut dim = 0;
+                        loop {
+                            idx[dim] += 1;
+                            if idx[dim] < view_dims[dim] {
+                                break;
+                            }
+                            idx[dim] = 0;
+                            dim += 1;
+                            if dim >= num_dims { break; }
+                        }
+                        if dim >= num_dims { break; }
+                    }
+                    buf
+                } else {
+                    vec![0u8; 0]
+                }
+            } else {
+                vec![0u8; 0]
+            }
+        };
+        if let Ok(mut tensor_data_map) = TENSOR_DATA.lock() {
+            tensor_data_map.insert(view_addr, view_data);
+        }
+        // Copy context association
+        if let Ok(mut ctx_map) = TENSOR_CONTEXTS.lock() {
+            if let Some(&ctx_id) = ctx_map.get(&parent_addr) {
+                ctx_map.insert(view_addr, ctx_id);
+            }
+        }
+        view_tensor as vx_tensor
+    }
 }
 
 #[no_mangle]

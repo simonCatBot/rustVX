@@ -14,12 +14,12 @@ extern "C" {
     fn vxGetContext(ref_: vx_reference) -> vx_context;
 }
 use openvx_core::c_api::{
-    vx_context, vx_df_image, vx_enum, vx_float32, vx_graph, vx_image, vx_imagepatch_addressing_t,
+    vx_bool, vx_context, vx_df_image, vx_enum, vx_float32, vx_graph, vx_image, vx_imagepatch_addressing_t,
     vx_int32, vx_map_id, vx_rectangle_t, vx_reference, vx_size, vx_status, vx_uint32, VxImage,
     VX_DF_IMAGE_IYUV, VX_DF_IMAGE_NV12, VX_DF_IMAGE_NV21, VX_DF_IMAGE_RGB, VX_DF_IMAGE_RGBA,
     VX_DF_IMAGE_RGBX, VX_DF_IMAGE_S16, VX_DF_IMAGE_S32, VX_DF_IMAGE_U16, VX_DF_IMAGE_U32,
     VX_DF_IMAGE_U8, VX_DF_IMAGE_UYVY, VX_DF_IMAGE_VIRT, VX_DF_IMAGE_YUV4, VX_DF_IMAGE_YUYV,
-    VX_ERROR_INVALID_PARAMETERS, VX_ERROR_INVALID_REFERENCE, VX_ERROR_NOT_IMPLEMENTED,
+    VX_ERROR_INVALID_PARAMETERS, VX_ERROR_INVALID_REFERENCE, VX_ERROR_NOT_IMPLEMENTED, VX_ERROR_NOT_SUPPORTED,
     VX_IMAGE_FORMAT, VX_IMAGE_HEIGHT, VX_IMAGE_IS_UNIFORM, VX_IMAGE_IS_VIRTUAL,
     VX_IMAGE_MEMORY_TYPE, VX_IMAGE_PLANES, VX_IMAGE_RANGE, VX_IMAGE_SIZE, VX_IMAGE_SPACE,
     VX_IMAGE_UNIFORM_VALUE, VX_IMAGE_WIDTH, VX_MEMORY_TYPE_HOST, VX_READ_AND_WRITE, VX_READ_ONLY,
@@ -85,6 +85,8 @@ pub extern "C" fn vxCreateImage(
             end_x: width,
             end_y: height,
         }),
+        is_uniform: false,
+        uniform_value: vx_pixel_value_t { reserved: [0; 16] },
     });
 
     let image_ptr = Box::into_raw(image) as vx_image;
@@ -220,6 +222,8 @@ pub extern "C" fn vxCreateVirtualImage(
             end_x: store_width,
             end_y: store_height,
         }),
+        is_uniform: false,
+        uniform_value: vx_pixel_value_t { reserved: [0; 16] },
     });
 
     let image_ptr = Box::into_raw(image) as vx_image;
@@ -362,6 +366,8 @@ pub extern "C" fn vxCreateImageFromHandle(
                 end_x: width,
                 end_y: height,
             }),
+        is_uniform: false,
+        uniform_value: vx_pixel_value_t { reserved: [0; 16] },
         });
 
         let image_ptr = Box::into_raw(image) as vx_image;
@@ -429,6 +435,9 @@ pub extern "C" fn vxCreateUniformImage(
 
     // Create data buffer and fill with uniform value
     let mut data = vec![0u8; size];
+
+    // Save the uniform value for later storage in the image struct
+    let uniform_val = unsafe { std::ptr::read(value) };
 
     unsafe {
         let val = std::ptr::read(value);
@@ -601,6 +610,8 @@ pub extern "C" fn vxCreateUniformImage(
             end_x: width,
             end_y: height,
         }),
+        is_uniform: true,
+        uniform_value: uniform_val,
     });
 
     // Convert to raw pointer
@@ -726,6 +737,8 @@ pub extern "C" fn vxCreateImageFromChannel(img: vx_image, channel: vx_enum) -> v
                     end_x: output_width,
                     end_y: output_height,
                 }),
+        is_uniform: false,
+        uniform_value: vx_pixel_value_t { reserved: [0; 16] },
             })
         } else {
             // For internal memory parents: share the parent's data Arc and store
@@ -755,6 +768,8 @@ pub extern "C" fn vxCreateImageFromChannel(img: vx_image, channel: vx_enum) -> v
                     end_x: output_width,
                     end_y: output_height,
                 }),
+        is_uniform: false,
+        uniform_value: vx_pixel_value_t { reserved: [0; 16] },
             })
         };
 
@@ -939,16 +954,24 @@ pub extern "C" fn vxQueryImage(
                 }
             }
             VX_IMAGE_IS_UNIFORM => {
-                if size != std::mem::size_of::<vx_enum>() {
+                if size != std::mem::size_of::<vx_bool>() {
                     return VX_ERROR_INVALID_PARAMETERS;
                 }
-                // Currently not tracking uniform status
-                *(ptr as *mut vx_enum) = 0; // vx_false_e
+                *(ptr as *mut vx_bool) = if img.is_uniform { 1 } else { 0 };
                 VX_SUCCESS
             }
             VX_IMAGE_UNIFORM_VALUE => {
-                // Not implemented
-                VX_ERROR_NOT_IMPLEMENTED
+                if size != std::mem::size_of::<vx_pixel_value_t>() {
+                    return VX_ERROR_INVALID_PARAMETERS;
+                }
+                if !img.is_uniform {
+                    // For non-uniform images, VX_IMAGE_UNIFORM_VALUE is not supported
+                    return VX_ERROR_NOT_SUPPORTED;
+                }
+                unsafe {
+                    std::ptr::write(ptr as *mut vx_pixel_value_t, img.uniform_value);
+                }
+                VX_SUCCESS
             }
             VX_IMAGE_SPACE => {
                 // Image space/color space
@@ -2017,6 +2040,8 @@ pub extern "C" fn vxCreateImageFromROI(img: vx_image, rect: *const vx_rectangle_
                 end_x: roi_width,
                 end_y: roi_height,
             }),
+        is_uniform: false,
+        uniform_value: vx_pixel_value_t { reserved: [0; 16] },
         });
 
         let image_ptr = Box::into_raw(roi_image) as vx_image;
