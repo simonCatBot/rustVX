@@ -9,41 +9,41 @@
 [![OpenVX Conformance](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml/badge.svg?branch=main)](https://github.com/kiritigowda/rustVX/actions/workflows/conformance.yml?query=branch%3Amain)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
-[![OpenVX 1.3.1](https://img.shields.io/badge/OpenVX-1.3.1-blue.svg)](https://www.khronos.org/openvx/)
+[![OpenVX 1.3.2](https://img.shields.io/badge/OpenVX-1.3.2-blue.svg)](https://www.khronos.org/openvx/)
 
-An [OpenVX 1.3.1](https://www.khronos.org/openvx/) implementation written in Rust. rustVX provides the complete OpenVX Vision Feature Set through a standard C API (`libopenvx_ffi`), enabling existing OpenVX applications to use a memory-safe, portable backend with no source changes.
+An [OpenVX 1.3.2](https://www.khronos.org/openvx/) implementation written in Rust. rustVX provides the complete OpenVX Vision Feature Set through a standard C API (`libopenvx_ffi`), enabling existing OpenVX applications to use a memory-safe, portable backend with no source changes.
 
 > [!NOTE]
-> rustVX targets the **OpenVX 1.3.1** specification. The KHR Streaming extension pipeup APIs were recently added (see PR #54) and are now exercised in CI; the streaming CTS test suite passes and is included in the conformance totals below.
+> rustVX targets the **OpenVX 1.3.2** specification. The KHR Streaming extension pipeup APIs were recently added (see PR #54) and are now exercised in CI; the streaming CTS test suite passes and is included in the conformance totals below.
 
 ## Project status
 
 | Item | Status |
 |------|--------|
-| Current version | `1.3.1` (workspace version in [`Cargo.toml`](Cargo.toml)) |
-| OpenVX target | **1.3.1** |
-| C API stability | Stable — follows the Khronos OpenVX 1.3.1 specification |
+| Current version | `1.3.2` (workspace version in [`Cargo.toml`](Cargo.toml)) |
+| OpenVX target | **1.3.2** |
+| C API stability | Stable — follows the Khronos OpenVX 1.3.2 specification |
 | Native Rust API stability | **Evolving** — the `openvx-core` / `openvx-vision` crate APIs are not yet finalized |
 | MSRV | Not declared; latest **stable** Rust toolchain recommended |
 | Distribution | Build from source (no crates.io / OS packages yet) |
 
 ## Conformance Status
 
-rustVX passes the full [Khronos OpenVX 1.3.1 Conformance Test Suite](https://github.com/KhronosGroup/OpenVX-cts) for all required profiles:
+rustVX passes the full [Khronos OpenVX 1.3.2 Conformance Test Suite](https://github.com/KhronosGroup/OpenVX-cts) for all required profiles:
 
 | Profile | Required tests | Passing | Status |
 |---------|---------------|---------|--------|
-| OpenVX baseline | 5551 | **5551 / 5551** | ✅ |
-| Vision conformance profile | 5923 | **5923 / 5923** | ✅ |
-| Enhanced Vision conformance profile | 1235 | **1235 / 1235** | ✅ |
+| OpenVX baseline | 5555 | **5555 / 5555** | ✅ |
+| Vision conformance profile | 6192 | **6192 / 6192** | ✅ |
+| Enhanced Vision conformance profile | 1503 | **1503 / 1503** | ✅ |
 | User Data Object extension | 14 | **14 / 14** | ✅ |
-| Pipelining extension | 81 | **81 / 81** | ✅ |
+| Pipelining extension | 109 | **109 / 109** | ✅ |
 | Streaming extension | 24 | **24 / 24** | ✅ |
-| **Total** | **6891** | **6891 / 6891** | ✅ **100%** |
+| **Total** | **7058** | **7058 / 7058** | ✅ **100%** |
 
 All implemented kernels and KHR extensions are exercised in CI with `-DOPENVX_CONFORMANCE_VISION=ON -DOPENVX_USE_ENHANCED_VISION=ON -DOPENVX_USE_USER_DATA_OBJECT=ON -DOPENVX_USE_PIPELINING=ON -DOPENVX_USE_STREAMING=ON`.
 
-The following OpenVX 1.3.1 extensions are **not implemented** in rustVX today:
+The following OpenVX 1.3.2 extensions are **not implemented** in rustVX today:
 
 - Neural Network (NN) extension
 - Import/Export extension
