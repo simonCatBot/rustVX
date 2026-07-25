@@ -283,7 +283,7 @@ jobs:
           sudo apt-get install -y build-essential cmake git python3
       - name: Build Khronos OpenVX sample
         run: |
-          git clone --recursive --depth 1 \
+          git clone --recursive --depth 1 --branch openvx_1.3.2 \
             https://github.com/KhronosGroup/OpenVX-sample-impl.git khronos-sample
           cd khronos-sample
           python3 Build.py --os=Linux --arch=64 --conf=Release
