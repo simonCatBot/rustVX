@@ -8,9 +8,8 @@
 //! - Streaming API: vxEnableGraphStreaming, vxStartGraphStreaming,
 //!   vxStopGraphStreaming
 
-use crate::types::{VxResult, VxStatus};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 // ============================================================================
@@ -212,13 +211,21 @@ impl VxGraphPipeliningState {
 // Type Aliases for C API
 // ============================================================================
 
+#[allow(non_camel_case_types)]
 pub type vx_enum = i32;
+#[allow(non_camel_case_types)]
 pub type vx_uint32 = u32;
+#[allow(non_camel_case_types)]
 pub type vx_bool = u32;
+#[allow(non_camel_case_types)]
 pub type vx_graph = *mut std::ffi::c_void;
+#[allow(non_camel_case_types)]
 pub type vx_reference = *mut std::ffi::c_void;
+#[allow(non_camel_case_types)]
 pub type vx_node = *mut std::ffi::c_void;
+#[allow(non_camel_case_types)]
 pub type vx_context = *mut std::ffi::c_void;
+#[allow(non_camel_case_types)]
 pub type vx_status = i32;
 
 // ============================================================================

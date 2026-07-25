@@ -6,7 +6,7 @@ use crate::pipelining::{VxGraphPipeliningState, VxGraphScheduleMode};
 use crate::pipelining_api::{move_refs_to_done, notify_graph_completed};
 use crate::pipelining_api::get_pipelining_state;
 use crate::unified_c_api::GRAPHS_DATA;
-use log::{debug, error, info};
+use log::info;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;

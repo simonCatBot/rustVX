@@ -5399,7 +5399,7 @@ pub extern "C" fn vxScheduleGraph(graph: vx_graph) -> vx_status {
         let g = graph_ptr as vx_graph;
         // Execute the graph nodes directly
         // This will update the graph state to COMPLETED or ABANDONED
-        let status = execute_graph_nodes(g);
+        let _status = execute_graph_nodes(g);
     });
 
     VX_SUCCESS

@@ -2264,7 +2264,7 @@ pub extern "C" fn vxSetParameterByIndex(
     }
 
     // Store node data before dropping the lock
-    let (context_id, kernel_id) = if let Ok(nodes) = NODES.lock() {
+    let (_context_id, _kernel_id) = if let Ok(nodes) = NODES.lock() {
         if let Some(node_data) = nodes.get(&id) {
             let cid = node_data.context_id;
             let kid = node_data.kernel_id;

@@ -10,7 +10,6 @@
 
 use crate::pipelining::*;
 use crate::unified_c_api::{GRAPHS_DATA, VX_NODE_STATE_PIPEUP};
-use crate::pipelining_executor;
 use log::{error, info, warn};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -581,7 +580,7 @@ pub extern "C" fn vxRegisterEvent(
     let ref_id = ref_ as u64;
 
     // Resolve the actual context from the reference instead of hardcoding 1
-    let mut context_id = unsafe { crate::c_api::vxGetContext(ref_ as *mut _) as u64 };
+    let mut context_id = crate::c_api::vxGetContext(ref_ as *mut _) as u64;
     if context_id == 0 {
         // Fallback: if ref is a graph, look it up in GRAPHS_DATA
         let mut fallback_ctx: Option<u64> = None;
@@ -738,9 +737,8 @@ pub extern "C" fn vxStartGraphStreaming(graph: vx_graph) -> vx_status {
         return VX_FAILURE;
     }
 
-    // Check not already streaming
     {
-        let mut thread = pipe_state.streaming_thread.lock().unwrap();
+        let thread = pipe_state.streaming_thread.lock().unwrap();
         if thread.is_some() {
             error!("vxStartGraphStreaming: already streaming");
             return VX_FAILURE;
